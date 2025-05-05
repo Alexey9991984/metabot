@@ -9,6 +9,7 @@ from dotenv import load_dotenv
 
 import logging
 
+
 # Настройка логирования
 logging.basicConfig(
     filename='bot_errors.log',
@@ -103,7 +104,7 @@ def close_open_positions():
             "type_filling": mt5.ORDER_FILLING_IOC,
         }
 
-        result = mt5.order_send(request)
+        result = send_order_with_retry(request)
 
         if result.retcode == mt5.TRADE_RETCODE_REQUOTE:
             send_telegram_message(
@@ -116,6 +117,24 @@ def close_open_positions():
                 f"❌ Ошибка закрытия позиции: {result.retcode}, описание: {result.comment}")
         else:
             send_telegram_message("✅ Сделка закрыта")
+
+
+def send_order_with_retry(request, retries=3, delay=2):
+    """Отправляет ордер с повтором при ошибке 10004."""
+    for attempt in range(1, retries + 1):
+        result = mt5.order_send(request)
+        if result.retcode == mt5.TRADE_RETCODE_DONE:
+            print(f"✅ Сделка успешно открыта с попытки {attempt}")
+            return result
+        elif result.retcode == 10004:
+            print(
+                f"⚠️ Попытка {attempt}: сервер занят (10004). Повтор через {delay} сек...")
+            time.sleep(delay)
+        else:
+            print(
+                f"❌ Ошибка открытия сделки: {result.retcode}, ошибка: {result.comment}")
+            break
+    return result
 
 
 def open_trade(direction):
