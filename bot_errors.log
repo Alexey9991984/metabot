@@ -1,0 +1,10 @@
+2025-05-05 12:43:01,600 - ERROR - Ошибка закрытия позиции: OrderSendResult(retcode=10004, deal=0, order=0, volume=0.0, price=0.0, bid=1.13388, ask=1.13401, comment='Requote', request_id=3233735058, retcode_external=0, request=TradeRequest(action=1, magic=123456, order=0, symbol='EURUSD', volume=0.1, price=1.13388, stoplimit=0.0, sl=0.0, tp=0.0, deviation=10, type=0, type_filling=1, type_time=0, expiration=0, comment='Auto close', position=150607264672, position_by=0))
+2025-05-05 12:43:01,798 - ERROR - Ошибка закрытия позиции: OrderSendResult(retcode=10004, deal=0, order=0, volume=0.0, price=0.0, bid=1.13388, ask=1.13401, comment='Requote', request_id=3233735059, retcode_external=0, request=TradeRequest(action=1, magic=123456, order=0, symbol='EURUSD', volume=0.1, price=1.13401, stoplimit=0.0, sl=0.0, tp=0.0, deviation=10, type=1, type_filling=1, type_time=0, expiration=0, comment='Auto close', position=150607302761, position_by=0))
+2025-05-07 13:01:30,201 - ERROR - ❌ Критическая ошибка: get_signal() missing 2 required positional arguments: 'high_prices' and 'low_prices'
+Traceback (most recent call last):
+  File "c:\Alex\Bots\metabot\bot.py", line 221, in run
+    strategy()
+    ~~~~~~~~^^
+  File "c:\Alex\Bots\metabot\bot.py", line 205, in strategy
+    signal = get_signal(close_prices)
+TypeError: get_signal() missing 2 required positional arguments: 'high_prices' and 'low_prices'

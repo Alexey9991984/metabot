@@ -1,26 +1,23 @@
+from strategy import get_signal
+from datetime import datetime
 import numpy as np
 import os
 import time
-import talib
 import requests
 import MetaTrader5 as mt5
 from dotenv import load_dotenv
-
-
 import logging
-
 
 # Настройка логирования
 logging.basicConfig(
-    filename='bot_errors.log',
-    level=logging.ERROR,
-    format='%(asctime)s - %(levelname)s - %(message)s'
+    filename="bot_log.txt",
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(message)s",
 )
+logging.info("🚀 Бот запущен.")
 
-# Загрузка .env
+# Загрузка переменных окружения
 load_dotenv()
-
-# Переменные окружения
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 CHAT_ID = os.getenv("CHAT_ID")
 MT5_LOGIN = int(os.getenv("MT5_LOGIN", 0))
@@ -29,61 +26,49 @@ MT5_SERVER = os.getenv("MT5_SERVER")
 
 SYMBOL = "EURUSD"
 LOT = 0.10
-TIMEFRAME = mt5.TIMEFRAME_M1
-POSITION_TYPE = None  # 'buy' или 'sell'
+TIMEFRAME = mt5.TIMEFRAME_M30
+POSITION_TYPE = None
 
 mt5.symbol_select(SYMBOL, True)
 
 
 def send_telegram_message(message):
+    print(f"[Telegram] {message}")
     if not TELEGRAM_TOKEN or not CHAT_ID:
-        print("❌ Не заданы TELEGRAM_TOKEN или CHAT_ID в .env")
         return
     url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
-    params = {"chat_id": CHAT_ID, "text": message}
     try:
-        response = requests.get(url, params=params)
-        response.raise_for_status()
-    except requests.exceptions.RequestException as e:
-        print(f"❌ Ошибка отправки в Telegram: {e}")
+        requests.get(url, params={"chat_id": CHAT_ID, "text": message})
+    except Exception as e:
+        print(f"Ошибка Telegram: {e}")
 
 
 def initialize_mt5():
+    print("🔄 Инициализация MetaTrader 5...")
     if not mt5.initialize(login=MT5_LOGIN, password=MT5_PASSWORD, server=MT5_SERVER):
-        error_msg = f"❌ Ошибка инициализации MT5: {mt5.last_error()}"
-        print(error_msg)
-        send_telegram_message(error_msg)
-        raise RuntimeError(error_msg)
-    print("✅ MetaTrader 5 успешно инициализирован")
-    send_telegram_message(
-        "✅ Бот запущен. Ждём сигналов для открытия/закрытия сделок.")
+        msg = f"❌ Ошибка инициализации MT5: {mt5.last_error()}"
+        send_telegram_message(msg)
+        raise RuntimeError(msg)
+    print("✅ MetaTrader 5 инициализирован.")
+    send_telegram_message("✅ Бот запущен. Ожидание сигналов...")
 
 
-def get_candles(symbol=SYMBOL, timeframe=TIMEFRAME, n=100):
+def get_candles(symbol=SYMBOL, timeframe=TIMEFRAME, n=250):
     rates = mt5.copy_rates_from_pos(symbol, timeframe, 0, n)
     if rates is None or len(rates) == 0:
-        msg = "❌ Ошибка получения свечей"
-        print(msg)
-        send_telegram_message(msg)
+        send_telegram_message("❌ Ошибка получения свечей")
         return []
     return np.array(rates)['close']
 
 
 def close_open_positions():
     positions = mt5.positions_get(symbol=SYMBOL)
-    if positions is None or len(positions) == 0:
-        return
-
-    symbol_info = mt5.symbol_info(SYMBOL)
-    if symbol_info is None:
-        send_telegram_message(
-            f"❌ Не удалось получить информацию о символе {SYMBOL}")
+    if not positions:
         return
 
     tick = mt5.symbol_info_tick(SYMBOL)
-    if tick is None or tick.bid == 0 or tick.ask == 0:
-        send_telegram_message(
-            "❌ Нет цен для закрытия сделки (tick None или 0)")
+    if not tick or tick.bid == 0 or tick.ask == 0:
+        send_telegram_message("❌ Нет данных для закрытия сделки")
         return
 
     for pos in positions:
@@ -97,143 +82,156 @@ def close_open_positions():
             "type": order_type,
             "position": pos.ticket,
             "price": price,
-            "deviation": 50,  # Увеличено отклонение для предотвращения ошибок
+            "deviation": 50,
             "magic": 123456,
             "comment": "Auto close",
             "type_time": mt5.ORDER_TIME_GTC,
             "type_filling": mt5.ORDER_FILLING_IOC,
         }
 
-        result = send_order_with_retry(request)
-
-        if result.retcode == mt5.TRADE_RETCODE_REQUOTE:
-            send_telegram_message(
-                "❌ Requote при попытке закрытия позиции. Попробую снова...")
-            time.sleep(2)  # Задержка перед повторной попыткой
-            result = mt5.order_send(request)  # Повторная отправка ордера
-
-        if result.retcode != mt5.TRADE_RETCODE_DONE:
-            send_telegram_message(
-                f"❌ Ошибка закрытия позиции: {result.retcode}, описание: {result.comment}")
-        else:
-            send_telegram_message("✅ Сделка закрыта")
-
-
-def send_order_with_retry(request, retries=3, delay=2):
-    """Отправляет ордер с повтором при ошибке 10004."""
-    for attempt in range(1, retries + 1):
         result = mt5.order_send(request)
         if result.retcode == mt5.TRADE_RETCODE_DONE:
-            print(f"✅ Сделка успешно открыта с попытки {attempt}")
-            return result
-        elif result.retcode == 10004:
-            print(
-                f"⚠️ Попытка {attempt}: сервер занят (10004). Повтор через {delay} сек...")
-            time.sleep(delay)
+            send_telegram_message("✅ Позиция закрыта")
         else:
-            print(
-                f"❌ Ошибка открытия сделки: {result.retcode}, ошибка: {result.comment}")
-            break
-    return result
+            send_telegram_message(f"❌ Ошибка закрытия: {result.comment}")
 
 
-def open_trade(direction):
-    tick = mt5.symbol_info_tick(SYMBOL)
-    if tick is None or tick.ask == 0 or tick.bid == 0:
-        send_telegram_message("❌ Ошибка получения цен для открытия сделки")
-        return
-
+def open_trade(signal):
+    lot = LOT
     symbol_info = mt5.symbol_info(SYMBOL)
-    if symbol_info is None or not symbol_info.visible:
-        send_telegram_message(f"❌ Символ {SYMBOL} не найден или недоступен!")
-        return
+    if symbol_info is None:
+        send_telegram_message(
+            f"❌ Не удалось получить информацию о символе {SYMBOL}")
+        logging.error(f"Не удалось получить информацию о символе {SYMBOL}")
+        return False
 
-    price = tick.ask if direction == "buy" else tick.bid
-    order_type = mt5.ORDER_TYPE_BUY if direction == "buy" else mt5.ORDER_TYPE_SELL
+    min_vol = symbol_info.volume_min
+    max_vol = symbol_info.volume_max
+    step_vol = symbol_info.volume_step
 
-    sl_points = 30
-    tp_points = 60
-    point = symbol_info.point
+    if (
+        lot < min_vol
+        or lot > max_vol
+        or round((lot - min_vol) / step_vol) * step_vol + min_vol - lot > 1e-8
+    ):
+        send_telegram_message(
+            f"❌ Недопустимый объём сделки: {lot}. Допустимо от {min_vol} до {max_vol} с шагом {step_vol}"
+        )
+        logging.error(
+            f"Неверный объем: {lot} (min={min_vol}, max={max_vol}, step={step_vol})"
+        )
+        return False
 
-    sl = price - sl_points * point if direction == "buy" else price + sl_points * point
-    tp = price + tp_points * point if direction == "buy" else price - tp_points * point
+    tick = mt5.symbol_info_tick(SYMBOL)
+    if tick is None:
+        send_telegram_message("❌ Не удалось получить цену тикера")
+        logging.error("Не удалось получить цену тикера")
+        return False
+
+    price = tick.ask if signal == 'buy' else tick.bid
+    sl = price - 0.0015 if signal == 'buy' else price + 0.0015
+    tp = price + 0.0015 if signal == 'buy' else price - 0.0015
+    deviation = 10
+    order_type = mt5.ORDER_TYPE_BUY if signal == 'buy' else mt5.ORDER_TYPE_SELL
 
     request = {
         "action": mt5.TRADE_ACTION_DEAL,
         "symbol": SYMBOL,
-        "volume": LOT,
+        "volume": lot,
         "type": order_type,
         "price": price,
         "sl": sl,
         "tp": tp,
-        "deviation": 20,
+        "deviation": deviation,
         "magic": 123456,
-        "comment": "Auto SMA Trade",
+        "comment": "Python script open",
         "type_time": mt5.ORDER_TIME_GTC,
         "type_filling": mt5.ORDER_FILLING_IOC,
     }
 
     result = mt5.order_send(request)
+
     if result.retcode != mt5.TRADE_RETCODE_DONE:
         send_telegram_message(
-            f"❌ Ошибка открытия сделки: {result.retcode}, ошибка: {mt5.last_error()}")
+            f"❌ Ошибка при открытии позиции: {result.retcode}")
+        logging.error(f"Ошибка открытия позиции: {result.retcode}")
+        return False
     else:
         send_telegram_message(
-            f"✅ Открыта {'покупка' if direction == 'buy' else 'продажа'} по {SYMBOL} с SL: {sl:.5f}, TP: {tp:.5f}")
-    # Отправка ордера
-    result = mt5.order_send(request)
-    if result.retcode != mt5.TRADE_RETCODE_DONE:
-        send_telegram_message(
-            f"❌ Ошибка открытия сделки: {result.retcode}, ошибка: {mt5.last_error()}")
-    else:
-        send_telegram_message(
-            f"✅ Открыта {'покупка' if direction == 'buy' else 'продажа'} по {SYMBOL}")
+            f"✅ Сделка открыта: {signal.upper()} {SYMBOL} по цене {price}")
+        logging.info(
+            f"Сделка открыта: {signal.upper()} {SYMBOL} по цене {price}")
+        return True
 
 
 def strategy():
-    global POSITION_TYPE
     close_prices = get_candles()
-    if len(close_prices) == 0:
-        return
-
-    sma5 = talib.SMA(close_prices, timeperiod=5)
-    sma20 = talib.SMA(close_prices, timeperiod=20)
-
-    print(f"SMA5: {sma5[-1]:.6f}, SMA20: {sma20[-1]:.6f}")
-
-    if sma5[-1] > sma20[-1] and sma5[-2] <= sma20[-2]:
-        if POSITION_TYPE != "buy":
-            close_open_positions()
-            open_trade("buy")
-            POSITION_TYPE = "buy"
-    elif sma5[-1] < sma20[-1] and sma5[-2] >= sma20[-2]:
-        if POSITION_TYPE != "sell":
-            close_open_positions()
-            open_trade("sell")
-            POSITION_TYPE = "sell"
+    if len(close_prices) < 200:
+        return None
+    return get_signal(close_prices)
 
 
 def run():
+    global POSITION_TYPE
     try:
         initialize_mt5()
+
+        last_ping_time = time.time()  # для отслеживания времени пинга
+
         while True:
-            strategy()
-            time.sleep(60)
+            # Обновление состояния позиции
+            positions = mt5.positions_get(symbol=SYMBOL)
+            if not positions:
+                POSITION_TYPE = None
+            else:
+                POSITION_TYPE = "buy" if positions[0].type == mt5.POSITION_TYPE_BUY else "sell"
+
+            # Пинг каждый час
+            if time.time() - last_ping_time >= 3600:
+                now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                send_telegram_message(f"✅ Бот жив. Время: {now}")
+                last_ping_time = time.time()
+
+            # Получение сигнала
+
+            # Проверка времени (с 6:00 до 22:00)
+            current_hour = datetime.now().hour
+            if 6 <= current_hour < 22:
+                signal = strategy()
+
+            # Логирование полученного сигнала и текущей позиции
+                logging.info(
+                    f"🔍 Получен сигнал: {signal}, Текущая позиция: {POSITION_TYPE}")
+
+            if signal and signal != POSITION_TYPE:
+                logging.info(
+                    "📈 Новый сигнал отличается от текущей позиции. Закрытие и открытие сделки...")
+                close_open_positions()
+                if open_trade(signal):
+                    POSITION_TYPE = signal
+                    logging.info(f"✅ Новая позиция открыта: {POSITION_TYPE}")
+                else:
+                    logging.warning("⚠️ Не удалось открыть новую позицию.")
+            else:
+                logging.info(
+                    "🌙 Вне торгового времени (с 22:00 до 6:00). Ожидание...")
+
+            if signal and signal != POSITION_TYPE:
+                logging.info(
+                    "📈 Новый сигнал отличается от текущей позиции. Закрытие и открытие сделки...")
+                close_open_positions()
+                if open_trade(signal):
+                    POSITION_TYPE = signal
+                    logging.info(f"✅ Новая позиция открыта: {POSITION_TYPE}")
+                else:
+                    logging.warning("⚠️ Не удалось открыть новую позицию.")
+            time.sleep(10)
+
     except Exception as e:
-        error_message = f"❌ Критическая ошибка: {e}"
-        send_telegram_message(error_message)
-        logging.error(error_message, exc_info=True)
-
-    # Попробуем переподключиться
-    try:
-        initialize_mt5()
-        send_telegram_message("🔄 Попытка переподключения к MetaTrader 5...")
-    except Exception as reconnect_error:
-        reconnect_message = f"❌ Не удалось переподключиться: {reconnect_error}"
-        send_telegram_message(reconnect_message)
-        logging.error(reconnect_message, exc_info=True)
-
-    time.sleep(60)
+        error_msg = f"❌ Критическая ошибка: {e}"
+        logging.error(error_msg, exc_info=True)
+        send_telegram_message(error_msg)
+        time.sleep(60)
 
 
 if __name__ == "__main__":
