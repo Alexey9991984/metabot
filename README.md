@@ -1,4 +1,4 @@
-# Metabot — Telegram-бот для автоматической торговли на MetaTrader 5
+# Metabot — Telegram-бот для автоматической торговли валютными парами на MetaTrader 5
 
 ## Описание
 
