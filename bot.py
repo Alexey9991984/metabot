@@ -187,7 +187,7 @@ def run():
                 POSITION_TYPE = "buy" if positions[0].type == mt5.POSITION_TYPE_BUY else "sell"
 
             # Пинг каждый час
-            if time.time() - last_ping_time >= 3600:
+            if time.time() - last_ping_time >= 10800:
                 now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
                 send_telegram_message(f"✅ Бот жив. Время: {now}")
                 last_ping_time = time.time()
